@@ -1,52 +1,46 @@
 """
 FastAPI‑служба журнального Merkle‑лог‑хранилища.
-
-Эндпоинты
----------
+-----------------------------------------------
 POST /log                 → добавить запись
 GET  /root/latest         → последний snapshot
-GET  /root/{snap_id}      → snapshot по ID
-GET  /proof/{index}       → доказательство; ?snap=ID для старого снимка
+GET  /root/{snap_id}      → snapshot по ID
+GET  /proof/{index}       → Merkle‑доказательство; ?snap=ID для старого снимка
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
+import base64, hashlib
 from typing import Dict, List, Optional
+from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
 
 from app.smt import SparseMerkleTree
 from app.signing import sign_root, verify_root
 from app.storage import Storage
 from app.models import LogRecordIn, LogRecordOut, SnapshotOut, ProofOut
 
-from functools import lru_cache 
-
-# --- параметры сервиса --- #
+# ─────────── Параметры сервиса ───────────
 DB_PATH = "api_log.db"
-DEPTH = 8  # для курсовой и тестов; в «бою» ставьте 256
+DEPTH   = 8          # в «бою» поставьте 256
 
-app = FastAPI(title="Merkle‑Log API")
+app    = FastAPI(title="Merkle‑Log API")
 _store = Storage(DB_PATH)
-_tree = SparseMerkleTree(DEPTH)
+_tree  = SparseMerkleTree(DEPTH)
 
-
+# ─────────── Восстановление дерева при старте ───────────
 def _rebuild_tree() -> None:
-    """При старте восстанавливаем дерево из БД (по последнему snapshot)."""
     snap = _store.latest_snapshot()
     if not snap:
-        return  # база пуста
-
+        return
     snap_id = snap[0]
     leaves: Dict[int, bytes] = _store.leaves_upto(snap_id)
-    for idx in sorted(leaves.keys()):
-        _tree.add(b"dummy")  # добавляем «пустышку», чтобы соблюсти индексы
-        _tree._nodes[(0, idx)] = leaves[idx]  # подменяем leaf‑хеш напрямую
-    # теперь вручную пересчитываем внутренние вершины
-    for idx in sorted(leaves.keys()):
+
+    for idx in sorted(leaves):
+        _tree.add(b"dummy")                 # placeholder, чтобы занять индекс
+        _tree._nodes[(0, idx)] = leaves[idx]
+
+    for idx in leaves:
         h = leaves[idx]
         level, pos = 0, idx
         while level < DEPTH:
@@ -60,23 +54,26 @@ def _rebuild_tree() -> None:
             pos //= 2
             _tree._nodes[(level, pos)] = h
 
-
 _rebuild_tree()
 
-# ---------- утилиты ---------- #
+# ─────────── Утилиты ───────────
 def b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
+def _get_leaf_or_404(index: int, snap_id: int) -> bytes:
+    leaf = _store.get_leaf(index, snap_id)
+    if leaf is None:
+        raise HTTPException(status_code=404, detail="index not present in snapshot")
+    return leaf
 
-# ---------- эндпоинты ---------- #
+# ─────────── API‑эндпоинты ───────────
 @app.post("/log", response_model=LogRecordOut)
 def add_log(item: LogRecordIn):
-    """Добавить новую строку лога и зафиксировать snapshot."""
     idx = _tree.add(item.data.encode())
     leaf_hash = hashlib.sha256(item.data.encode()).digest()
 
     root = _tree.root()
-    sig = sign_root(root)
+    sig  = sign_root(root)
     snap_id = _store.create_snapshot(root, sig)
     _store.insert_leaf(idx, leaf_hash, snap_id)
 
@@ -113,33 +110,32 @@ def get_root(snap_id: int):
     )
 
 
+# ─────────────────────────────────────────────
+#        Доказательство включения записи
+# ─────────────────────────────────────────────
 @app.get("/proof/{index}", response_model=ProofOut)
 def get_proof(index: int, snap: Optional[int] = Query(None)):
     """
-    Доказательство включения листа `index`.
-    Если ?snap=ID → строим proof относительно указанного snapshot‑a,
-    иначе — относительно последнего.
+    Возвращает Merkle‑proof для листа `index`.
+    Если ?snap=ID — proof строится относительно указанного snapshot‑а,
+    иначе — относительно самого последнего.
     """
-    snap_tup = (
-        _store.latest_snapshot() if snap is None else _store.get_snapshot(snap)
-    )
+    snap_tup = _store.latest_snapshot() if snap is None else _store.get_snapshot(snap)
     if not snap_tup:
         raise HTTPException(status_code=404, detail="snapshot not found")
     sid, root, sig, _ = snap_tup
     if not verify_root(root, sig):
         raise HTTPException(status_code=400, detail="root signature invalid")
 
-    # ► строим proof: либо из «живого» дерева, либо из реконструированного
+    # получаем реальный leaf‑hash из БД
+    leaf_hash = _get_leaf_or_404(index, sid)
+
+    # строим proof: из живого дерева или реконструированного
     if snap is None or sid == _store.latest_snapshot()[0]:
         proof_bytes = _tree.proof(index)
     else:
-        try:
-            tree = _tree_for_snapshot(sid)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="index not present in snapshot")
-        proof_bytes = tree.proof(index)
+        proof_bytes = _tree_for_snapshot(sid).proof(index)
 
-    leaf_hash = hashlib.sha256(f"record {index}".encode()).digest()
     return ProofOut(
         snapshot_id=sid,
         root=b64(root),
@@ -149,29 +145,21 @@ def get_proof(index: int, snap: Optional[int] = Query(None)):
         proof=[b64(h) for h in proof_bytes],
     )
 
+# ─────────── Реконструкция дерева для прошлого snapshot‑а ───────────
 @lru_cache(maxsize=64)
 def _tree_for_snapshot(snap_id: int) -> SparseMerkleTree:
-    """
-    Собрать SparseMerkleTree, содержащий все листья,
-    существовавшие к моменту snapshot_id.
-    Кэшируем, чтобы повторные запросы были O(1).
-    """
-    leaves = _store.leaves_upto(snap_id)          # {index: leaf_hash}
+    leaves = _store.leaves_upto(snap_id)
     if not leaves:
         raise ValueError("snapshot has no leaves")
 
     t = SparseMerkleTree(DEPTH)
-    max_idx = max(leaves.keys())
-
-    # быстро «создаём» пустое дерево нужной ширины
+    max_idx = max(leaves)
     for _ in range(max_idx + 1):
-        t.add(b"0")                    # placeholder
-    # подменяем реальные leaf‑хеши
+        t.add(b"0")                       # placeholder
     for idx, h in leaves.items():
         t._nodes[(0, idx)] = h
 
-    # пересчитываем все внутренние вершины
-    for idx in leaves.keys():
+    for idx in leaves:
         h = leaves[idx]
         level, pos = 0, idx
         while level < DEPTH:

@@ -89,3 +89,15 @@ class Storage:
             "SELECT id, hash FROM leaves WHERE snapshot_id<=?", (snapshot_id,)
         )
         return {row[0]: row[1] for row in cur.fetchall()}
+    
+    def get_leaf(self, index: int, snapshot_id: int) -> bytes | None:
+        """Вернуть хеш листа по индексу, существующий к моменту snapshot_id."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT hash FROM leaves "
+            "WHERE id=? AND snapshot_id<=? "
+            "ORDER BY snapshot_id DESC LIMIT 1",
+            (index, snapshot_id),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None

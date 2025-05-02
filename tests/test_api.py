@@ -32,3 +32,14 @@ def test_end_to_end():
     proof_b = [base64.b64decode(p) for p in proof_body["proof"]]
     leaf = hashlib.sha256("hello api".encode()).digest()
     assert SparseMerkleTree.verify_proof(leaf, idx, proof_b, root, DEPTH)
+
+def test_leaf_matches_db():
+    # вставляем произвольную строку
+    data = "confidential log line"
+    r = client.post("/log", json={"data": data}).json()
+    idx = r["index"]; snap = r["snapshot_id"]
+
+    resp = client.get(f"/proof/{idx}?snap={snap}").json()
+    leaf_from_api = base64.b64decode(resp["leaf"])
+    assert leaf_from_api == hashlib.sha256(data.encode()).digest()
+
