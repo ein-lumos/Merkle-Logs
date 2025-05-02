@@ -30,6 +30,8 @@ keys/
 demos/
 tests_flow/
 
+*.db-shm
+*.db-wal
 *.db
 *.sqlite
 log.db
