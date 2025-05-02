@@ -29,13 +29,12 @@ class Storage:
     def __init__(self, path: str | Path = "log.db") -> None:
         self.conn = sqlite3.connect(
             path,
-            isolation_level=None,        # autocommit
-            check_same_thread=False      # позволяем другим потокам пользоваться тем же conn
+            isolation_level=None,        
+            check_same_thread=False      
         )
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self._create_tables()
 
-    # ---------- schema ---------- #
     def _create_tables(self) -> None:
         cur = self.conn.cursor()
         cur.execute(
@@ -52,7 +51,6 @@ class Storage:
                    ts        DATETIME DEFAULT CURRENT_TIMESTAMP)"""
         )
 
-    # ---------- snapshots ---------- #
     def create_snapshot(self, root: bytes, signature: bytes) -> int:
         cur = self.conn.cursor()
         cur.execute(
@@ -75,7 +73,6 @@ class Storage:
         )
         return cur.fetchone()
 
-    # ---------- leaves ---------- #
     def insert_leaf(self, index: int, leaf_hash: bytes, snapshot_id: int) -> None:
         self.conn.execute(
             "INSERT INTO leaves(id, hash, snapshot_id) VALUES(?, ?, ?)",

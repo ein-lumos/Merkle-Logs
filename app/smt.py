@@ -1,11 +1,11 @@
 """
-Sparse Merkle Tree (SMT) — ядро системы целостности логов.
+Sparse Merkle Tree (SMT) — основа системы целостности логов.
 
 • глубина по умолчанию 256 (под SHA‑256);
-• add(data)        → индекс вставленной записи;
-• root()           → текущий корневой хеш;
-• proof(index)     → список «соседних» хешей (длина = depth);
-• verify_proof(...) — статический метод для быстрой проверки на стороне клиента.
+• add(data)        - индекс вставленной записи;
+• root()           - текущий корневой хеш;
+• proof(index)     - список «соседних» хешей (длина = depth);
+• verify_proof(...) - статический метод для быстрой проверки на стороне клиента.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import Dict, List, Tuple
 class SparseMerkleTree:
     def __init__(self, depth: int = 256) -> None:
         self.depth: int = depth
-        # Zero‑hashes[0] = 32 нулевых байт; дальше — рекурсивное хеширование
         self.zero_hashes: List[bytes] = [b"\x00" * 32]
         for _ in range(1, depth + 1):
             self.zero_hashes.append(
@@ -26,14 +25,12 @@ class SparseMerkleTree:
 
         # (level, position) → хеш‑значение
         self._nodes: Dict[Tuple[int, int], bytes] = {}
-        self._size: int = 0  # число вставленных листьев
+        self._size: int = 0  
 
-    # ---------- внутренние помощники ---------- #
     @staticmethod
-    def _h(data: bytes) -> bytes:  # однострочный SHA‑256
+    def _h(data: bytes) -> bytes:  
         return hashlib.sha256(data).digest()
 
-    # ---------- публичные методы ---------- #
     def add(self, data: bytes) -> int:
         """Добавить новый лист; вернуть его индекс."""
         idx = self._size
@@ -44,7 +41,7 @@ class SparseMerkleTree:
         self._nodes[(level, pos)] = h
 
         while level < self.depth:
-            sibling_pos = pos ^ 1  # соседний узел
+            sibling_pos = pos ^ 1  
             sibling_hash = self._nodes.get((level, sibling_pos), self.zero_hashes[level])
 
             concat = h + sibling_hash if pos % 2 == 0 else sibling_hash + h
@@ -73,7 +70,6 @@ class SparseMerkleTree:
             pos //= 2
         return proof
 
-    # ---------- статическая верификация ---------- #
     @staticmethod
     def verify_proof(
         leaf_hash: bytes,

@@ -13,8 +13,8 @@ os.environ["MERKLE_LOG_DB"] = tmpdb
 import app.api as api
 importlib.reload(api)                         # чтобы app поднялся с новой БД
 
-from app.signing import verify_root           # ← нужный импорт
-from app.smt import SparseMerkleTree          # класс для локальной проверки
+from app.signing import verify_root           
+from app.smt import SparseMerkleTree          
 
 client = TestClient(api.app)
 DEPTH = api.DEPTH

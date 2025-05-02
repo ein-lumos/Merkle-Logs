@@ -20,15 +20,13 @@ from app.signing import sign_root, verify_root
 from app.storage import Storage
 from app.models import LogRecordIn, LogRecordOut, SnapshotOut, ProofOut
 
-# ─────────── Параметры сервиса ───────────
 DB_PATH = "api_log.db"
-DEPTH   = 8          # в «бою» поставьте 256
+DEPTH   = 8          
 
 app    = FastAPI(title="Merkle‑Log API")
 _store = Storage(DB_PATH)
 _tree  = SparseMerkleTree(DEPTH)
 
-# ─────────── Восстановление дерева при старте ───────────
 def _rebuild_tree() -> None:
     snap = _store.latest_snapshot()
     if not snap:
@@ -56,7 +54,6 @@ def _rebuild_tree() -> None:
 
 _rebuild_tree()
 
-# ─────────── Утилиты ───────────
 def b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
@@ -66,7 +63,6 @@ def _get_leaf_or_404(index: int, snap_id: int) -> bytes:
         raise HTTPException(status_code=404, detail="index not present in snapshot")
     return leaf
 
-# ─────────── API‑эндпоинты ───────────
 @app.post("/log", response_model=LogRecordOut)
 def add_log(item: LogRecordIn):
     idx = _tree.add(item.data.encode())
@@ -110,9 +106,6 @@ def get_root(snap_id: int):
     )
 
 
-# ─────────────────────────────────────────────
-#        Доказательство включения записи
-# ─────────────────────────────────────────────
 @app.get("/proof/{index}", response_model=ProofOut)
 def get_proof(index: int, snap: Optional[int] = Query(None)):
     """
@@ -127,10 +120,8 @@ def get_proof(index: int, snap: Optional[int] = Query(None)):
     if not verify_root(root, sig):
         raise HTTPException(status_code=400, detail="root signature invalid")
 
-    # получаем реальный leaf‑hash из БД
     leaf_hash = _get_leaf_or_404(index, sid)
 
-    # строим proof: из живого дерева или реконструированного
     if snap is None or sid == _store.latest_snapshot()[0]:
         proof_bytes = _tree.proof(index)
     else:
@@ -145,7 +136,7 @@ def get_proof(index: int, snap: Optional[int] = Query(None)):
         proof=[b64(h) for h in proof_bytes],
     )
 
-# ─────────── Реконструкция дерева для прошлого snapshot‑а ───────────
+# Реконструкция дерева для прошлого snapshot
 @lru_cache(maxsize=64)
 def _tree_for_snapshot(snap_id: int) -> SparseMerkleTree:
     leaves = _store.leaves_upto(snap_id)
@@ -155,7 +146,7 @@ def _tree_for_snapshot(snap_id: int) -> SparseMerkleTree:
     t = SparseMerkleTree(DEPTH)
     max_idx = max(leaves)
     for _ in range(max_idx + 1):
-        t.add(b"0")                       # placeholder
+        t.add(b"0")                       # тк потом все равно значение изменится
     for idx, h in leaves.items():
         t._nodes[(0, idx)] = h
 

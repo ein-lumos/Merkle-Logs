@@ -3,8 +3,8 @@
 
 • ECDSA (кривая P‑256, алгоритм SHA‑256);
 • ключи храним в каталоге `keys/` (создаётся при первом запуске);
-• sign_root(root_bytes)  -> подпись (bytes);
-• verify_root(root, sig) -> bool.
+• sign_root(root_bytes)  - подпись (bytes);
+• verify_root(root, sig) - bool.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ def _generate_keys() -> Tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublic
     priv_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
     pub_key = priv_key.public_key()
 
-    # приватный (без пароля) — только для курсовой; права 600
     with open(PRIV_PATH, "wb") as f:
         f.write(
             priv_key.private_bytes(
@@ -41,7 +40,6 @@ def _generate_keys() -> Tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublic
         )
     os.chmod(PRIV_PATH, 0o600)
 
-    # публичный
     with open(PUB_PATH, "wb") as f:
         f.write(
             pub_key.public_bytes(
@@ -68,7 +66,6 @@ def _load_keys() -> Tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]
     return priv_key, pub_key  # type: ignore[return-value]
 
 
-# --- API, которым будет пользоваться сервис --- #
 _priv, _pub = _load_keys()
 
 
